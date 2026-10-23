@@ -1,0 +1,28 @@
+{
+  "name": "gp2y1010",
+  "author": "Sergek",
+  "pins": [
+    "VCC",
+    "GND",
+    "IN",
+    "OUT"
+  ],
+  "controls": [
+    {
+      "id": "dust",
+      "label": "Dust density, ug/m3",
+      "type": "range",
+      "min": 0,
+      "max": 500,
+      "step": 1
+    },
+    {
+      "id": "noise",
+      "label": "Noise, +/- ug/m3",
+      "type": "range",
+      "min": 0,
+      "max": 50,
+      "step": 1
+    }
+  ]
+}

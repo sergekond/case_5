@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "author": "Sergek",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "board-esp32-devkit-c-v4", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+    { "type": "wokwi-dht22", "id": "dht1", "top": -90, "left": 230, "attrs": { "temperature": "22.5", "humidity": "45" } },
+    { "type": "chip-gp2y1010", "id": "dust1", "top": 60, "left": 260, "attrs": { "dust": "20", "noise": "5" } },
+    { "type": "wokwi-potentiometer", "id": "pot1", "top": 190, "left": 230, "attrs": {} }
+  ],
+  "connections": [
+    [ "esp:TX", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX", "$serialMonitor:TX", "", [] ],
+    [ "dht1:VCC", "esp:3V3", "red", [] ],
+    [ "dht1:GND", "esp:GND.2", "black", [] ],
+    [ "dht1:SDA", "esp:15", "green", [] ],
+    [ "dust1:VCC", "esp:5V", "red", [] ],
+    [ "dust1:GND", "esp:GND.1", "black", [] ],
+    [ "dust1:IN", "esp:16", "green", [] ],
+    [ "dust1:OUT", "esp:34", "blue", [] ],
+    [ "pot1:VCC", "esp:3V3", "red", [] ],
+    [ "pot1:GND", "esp:GND.1", "black", [] ],
+    [ "pot1:SIG", "esp:35", "orange", [] ]
+  ],
+  "dependencies": {}
+}

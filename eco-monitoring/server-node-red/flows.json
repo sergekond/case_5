@@ -1,0 +1,263 @@
+[
+  {
+    "id": "eco_tab",
+    "type": "tab",
+    "label": "Эко-мониторинг",
+    "disabled": false,
+    "info": "Серверная часть системы «Умный экологический мониторинг»:\n- приём данных станций (iot_practice/+/eco)\n- контроль пороговых значений и генерация событий (iot_practice/<USER_ID>/eco/alert)\n- контроль связи: LWT-статус и таймаут данных"
+  },
+  {
+    "id": "eco_broker",
+    "type": "mqtt-broker",
+    "name": "HiveMQ public",
+    "broker": "broker.hivemq.com",
+    "port": "1883",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "false",
+    "birthPayload": "",
+    "birthMsg": {},
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "false",
+    "closePayload": "",
+    "closeMsg": {},
+    "willTopic": "",
+    "willQos": "0",
+    "willRetain": "false",
+    "willPayload": "",
+    "willMsg": {},
+    "userProps": "",
+    "sessionExpiry": ""
+  },
+  {
+    "id": "c_title",
+    "type": "comment",
+    "z": "eco_tab",
+    "name": "Приём данных станций и контроль порогов",
+    "info": "",
+    "x": 200,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "in_data",
+    "type": "mqtt in",
+    "z": "eco_tab",
+    "name": "Данные станций",
+    "topic": "iot_practice/+/eco",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "eco_broker",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 160,
+    "y": 120,
+    "wires": [
+      [
+        "fn_check",
+        "dbg_raw"
+      ]
+    ]
+  },
+  {
+    "id": "fn_check",
+    "type": "function",
+    "z": "eco_tab",
+    "name": "Проверка данных и порогов",
+    "func": "// Приём пакета станции, проверка данных и контроль пороговых значений.\n// Выход 1 -> события (alert) в iot_practice/<USER_ID>/eco/alert\n// Выход 2 -> краткая сводка для отладки\n\n// ---------- Пороговые значения ----------\nconst T = {\n    pm25:        { elevated: 35, critical: 75 },   // мкг/м3: норма < 35 <= повышенный < 75 <= критический\n    temperature: { min: -25, max: 35 },            // °C\n    humidity:    { max: 85 }                       // %\n};\n\nconst d = msg.payload;\n\n// ---------- Проверка формата ----------\nif (typeof d !== 'object' || d === null || typeof d.id !== 'string') {\n    node.warn('Некорректный пакет в ' + msg.topic + ': ' + JSON.stringify(d));\n    return null;\n}\nconst id = d.id;\nconst now = new Date();\n\n// Время последнего пакета - для контроля «станция пропала» (watchdog)\nconst seen = flow.get('lastSeen') || {};\nseen[id] = { ts: now.getTime(), topic: msg.topic };\nflow.set('lastSeen', seen);\n\n// ---------- Уровни параметров ----------\nfunction num(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }\n\nfunction pmLevel(v) {\n    if (v === null) return 'unknown';\n    if (v >= T.pm25.critical) return 'critical';\n    if (v >= T.pm25.elevated) return 'elevated';\n    return 'normal';\n}\nfunction tempLevel(v) {\n    if (v === null) return 'unknown';\n    if (v > T.temperature.max) return 'high';\n    if (v < T.temperature.min) return 'low';\n    return 'normal';\n}\nfunction humLevel(v) {\n    if (v === null) return 'unknown';\n    return v > T.humidity.max ? 'high' : 'normal';\n}\n\nconst values = { pm25: num(d.pm25), temperature: num(d.temperature), humidity: num(d.humidity) };\nconst levels = {\n    pm25: pmLevel(values.pm25),\n    temperature: tempLevel(values.temperature),\n    humidity: humLevel(values.humidity)\n};\n\nconst NAMES = { pm25: 'Концентрация PM2.5', temperature: 'Температура', humidity: 'Влажность' };\nconst UNITS = { pm25: 'мкг/м³', temperature: '°C', humidity: '%' };\nconst LEVEL_TEXT = {\n    normal: 'в норме', elevated: 'повышенный уровень', critical: 'КРИТИЧЕСКИЙ уровень',\n    high: 'выше нормы', low: 'ниже нормы'\n};\nfunction severity(level) {\n    if (level === 'critical') return 'critical';\n    if (level === 'normal') return 'info';\n    return 'warning';\n}\n\n// ---------- Событие - только при СМЕНЕ уровня (без спама каждую минуту) ----------\nconst state = flow.get('levels') || {};\nconst prev = state[id] || {};\nconst alerts = [];\nconst alertTopic = msg.topic + '/alert';\n\nfor (const key of Object.keys(levels)) {\n    const cur = levels[key];\n    const was = prev[key] || 'normal';\n    if (cur === 'unknown' || cur === was) continue;\n\n    const text = cur === 'normal' && was !== 'normal'\n        ? `${NAMES[key]} вернулась в норму: ${values[key]} ${UNITS[key]}`\n        : `${NAMES[key]}: ${LEVEL_TEXT[cur]} - ${values[key]} ${UNITS[key]}`;\n\n    alerts.push({\n        topic: alertTopic,\n        payload: {\n            id: id,\n            type: key,\n            level: cur,\n            severity: severity(cur),\n            value: values[key],\n            message: text,\n            ts: now.toISOString()\n        }\n    });\n}\nstate[id] = Object.assign({}, prev, ...Object.keys(levels)\n    .filter(k => levels[k] !== 'unknown')\n    .map(k => ({ [k]: levels[k] })));\nflow.set('levels', state);\n\n// ---------- Статус узла и сводка ----------\nconst colors = { normal: 'green', elevated: 'yellow', critical: 'red', unknown: 'grey' };\nnode.status({\n    fill: colors[levels.pm25],\n    shape: 'dot',\n    text: `${id}: PM2.5 ${values.pm25 ?? '-'}, ${values.temperature ?? '-'}°C, ${now.toLocaleTimeString()}`\n});\n\nconst summary = {\n    payload: `${id}: t=${values.temperature}°C, h=${values.humidity}%, p=${num(d.pressure)} мбар, ` +\n             `PM2.5=${values.pm25} (${levels.pm25}), событий: ${alerts.length}`\n};\n\nreturn [alerts.length ? alerts : null, summary];\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 120,
+    "wires": [
+      [
+        "out_alert",
+        "dbg_alert"
+      ],
+      [
+        "dbg_summary"
+      ]
+    ]
+  },
+  {
+    "id": "c_status",
+    "type": "comment",
+    "z": "eco_tab",
+    "name": "Контроль связи: LWT и таймаут данных",
+    "info": "",
+    "x": 190,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "in_status",
+    "type": "mqtt in",
+    "z": "eco_tab",
+    "name": "Статус станций (LWT)",
+    "topic": "iot_practice/+/eco/status",
+    "qos": "1",
+    "datatype": "utf8",
+    "broker": "eco_broker",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 170,
+    "y": 300,
+    "wires": [
+      [
+        "fn_status"
+      ]
+    ]
+  },
+  {
+    "id": "fn_status",
+    "type": "function",
+    "z": "eco_tab",
+    "name": "Смена статуса",
+    "func": "// Статус станции из LWT: iot_practice/<USER_ID>/eco/status = \"online\" | \"offline\"\n// Событие генерируется только при смене статуса.\n\nconst parts = msg.topic.split('/');          // [iot_practice, USER_ID, eco, status]\nconst userId = parts[1];\nconst id = 'Eco-' + userId;\nconst online = String(msg.payload).trim() === 'online';\n\nconst statuses = flow.get('online') || {};\nif (statuses[id] === online) return null;    // статус не изменился\nstatuses[id] = online;\nflow.set('online', statuses);\n\nnode.status({ fill: online ? 'green' : 'red', shape: 'dot', text: `${id}: ${online ? 'online' : 'offline'}` });\n\nreturn {\n    topic: `iot_practice/${userId}/eco/alert`,\n    payload: {\n        id: id,\n        type: online ? 'online' : 'offline',\n        level: online ? 'normal' : 'offline',\n        severity: online ? 'info' : 'critical',\n        message: online ? 'Станция на связи' : 'Станция потеряла связь с брокером (LWT)',\n        ts: new Date().toISOString()\n    }\n};\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 400,
+    "y": 300,
+    "wires": [
+      [
+        "out_alert",
+        "dbg_alert"
+      ]
+    ]
+  },
+  {
+    "id": "inj_watch",
+    "type": "inject",
+    "z": "eco_tab",
+    "name": "каждые 30 с",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "30",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "10",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 170,
+    "y": 360,
+    "wires": [
+      [
+        "fn_watch"
+      ]
+    ]
+  },
+  {
+    "id": "fn_watch",
+    "type": "function",
+    "z": "eco_tab",
+    "name": "Таймаут данных",
+    "func": "// Контроль поступления данных: если станция молчит дольше TIMEOUT_MIN - событие.\n// Запускается узлом inject каждые 30 с.\n\nconst TIMEOUT_MIN = 5;   // 5 периодов измерения (в Wokwi симуляция медленнее - с запасом)\nconst TIMEOUT_MS = TIMEOUT_MIN * 60 * 1000;\n\nconst seen = flow.get('lastSeen') || {};\nconst stale = flow.get('stale') || {};\nconst now = Date.now();\nconst out = [];\n\nfor (const [id, info] of Object.entries(seen)) {\n    const isStale = now - info.ts > TIMEOUT_MS;\n    if (isStale && !stale[id]) {\n        out.push({\n            topic: info.topic + '/alert',\n            payload: {\n                id: id,\n                type: 'timeout',\n                level: 'offline',\n                severity: 'warning',\n                message: `Нет данных от станции более ${TIMEOUT_MIN} мин`,\n                ts: new Date().toISOString()\n            }\n        });\n    }\n    stale[id] = isStale;\n}\nflow.set('stale', stale);\n\nconst total = Object.keys(seen).length;\nconst silent = Object.values(stale).filter(Boolean).length;\nnode.status({ fill: silent ? 'yellow' : 'green', shape: 'ring', text: `станций: ${total}, молчат: ${silent}` });\n\nreturn [out.length ? out : null];\n",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 400,
+    "y": 360,
+    "wires": [
+      [
+        "out_alert",
+        "dbg_alert"
+      ]
+    ]
+  },
+  {
+    "id": "out_alert",
+    "type": "mqtt out",
+    "z": "eco_tab",
+    "name": "События (alert)",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "eco_broker",
+    "x": 720,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "dbg_raw",
+    "type": "debug",
+    "z": "eco_tab",
+    "name": "сырые данные",
+    "active": false,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "true",
+    "targetType": "full",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 400,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "dbg_summary",
+    "type": "debug",
+    "z": "eco_tab",
+    "name": "сводка",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 700,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "dbg_alert",
+    "type": "debug",
+    "z": "eco_tab",
+    "name": "события",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 710,
+    "y": 260,
+    "wires": []
+  }
+]

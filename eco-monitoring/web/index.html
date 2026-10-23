@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Экомониторинг</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- JS API Яндекс.Карт 3.0 (ключ продукта «JavaScript API», без defer) -->
+    <script src="https://api-maps.yandex.ru/v3/?apikey=ВАШ_КЛЮЧ&lang=ru_RU"></script>
+</head>
+<body>
+    <h1>Умный экологический мониторинг</h1>
+    <div id="map"></div>
+
+    <!-- Слева внизу: состояние подключения и легенда -->
+    <div id="panel" class="card">
+        <div id="status" class="status status--wait">Загрузка карты…</div>
+        <div id="stations-count" class="muted">Станций: 0</div>
+        <div class="legend">
+            <div><span class="dot level--normal"></span><span id="legend-normal">норма</span></div>
+            <div><span class="dot level--elevated"></span><span id="legend-elevated">повышенный</span></div>
+            <div><span class="dot level--critical"></span><span id="legend-critical">критический</span></div>
+            <div><span class="dot level--offline"></span><span>нет связи</span></div>
+        </div>
+    </div>
+
+    <!-- Справа: лента событий от сервера (Node-RED) -->
+    <div id="events" class="card">
+        <div class="events__title">События</div>
+        <ul id="events-list"><li class="muted">Событий пока нет</li></ul>
+    </div>
+
+    <!-- Порядок важен: библиотека MQTT -> конфигурация -> основная программа -->
+    <script src="js/paho-mqtt-min.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
